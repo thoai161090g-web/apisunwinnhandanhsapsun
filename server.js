@@ -15,7 +15,7 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost
 // Biến lưu trữ kết quả dự đoán JSON mới nhất
 let latestPredictionJson = null;
 
-// Route hiển thị giao diện Bảng Thống Kê
+// Route hiển thị giao diện Bảng Thống Kê (Web UI)
 app.get('/', (req, res) => {
     res.send(`
     <!DOCTYPE html>
@@ -108,7 +108,7 @@ function renderTableRows() {
         .reverse();
 
     if (historyArray.length === 0) {
-        return `<tr><td colspan="6" style="padding: 20px;">Đang khởi tạo và chờ phiên dữ liệu đầu tiên...</td></tr>`;
+        return `<tr><td colspan="6" style="padding: 20px;">Đang khởi tạo và gom dữ liệu phiên...</td></tr>`;
     }
 
     return historyArray.map(item => {
@@ -129,7 +129,7 @@ function renderTableRows() {
     }).join('');
 }
 
-// Endpoint Health Check
+// Endpoint Health Check cho UptimeRobot
 app.get('/health', (req, res) => {
     res.status(200).send("OK");
 });
@@ -150,7 +150,7 @@ app.get('/api/predict', (req, res) => {
 app.listen(PORT, () => {
     console.log(`[🚀] Express Server đang chạy tại port: ${PORT}`);
     
-    // Tự động gửi request giữ ấm server mỗi 5 phút (Self-Ping)
+    // Self-Ping giữ ấm server mỗi 5 phút
     setInterval(async () => {
         try {
             await axios.get(`${RENDER_EXTERNAL_URL}/health`);
@@ -289,18 +289,16 @@ class TaiXiuAnalyzer {
     }
 
     runSubModel(index, history) {
-        if (history.length < 3) return null;
+        if (history.length < 1) return null;
         const results = this.getResultArray(history);
         const last = results[results.length - 1];
         const model = this.subModels[`sub_model_${index}`];
 
-        if (!model || results.length < model.minLength) return null;
-
         const streak = this.getStreak(results);
         if (streak >= 3) {
-            return { prediction: last, confidence: 0.8, reason: `Cầu bệt ${streak} tay`, model_name: model.name };
+            return { prediction: last, confidence: 0.8, reason: `Cầu bệt ${streak} tay`, model_name: model ? model.name : 'SubModel' };
         } else {
-            return { prediction: last === 'Tài' ? 'Xỉu' : 'Tài', confidence: 0.75, reason: 'Cầu đảo 1-1', model_name: model.name };
+            return { prediction: last === 'Tài' ? 'Xỉu' : 'Tài', confidence: 0.75, reason: 'Cầu đảo 1-1', model_name: model ? model.name : 'SubModel' };
         }
     }
 
@@ -364,35 +362,45 @@ class TaiXiuAnalyzer {
 
 
 // ============================================================
-// SECTION 3: LUỒNG CÀO API & XỬ LÝ DỮ LIỆU
+// SECTION 3: LUỒNG CÀO API & TÍCH LŨY DỮ LIỆU
 // ============================================================
 
 const analyzer = new TaiXiuAnalyzer();
 const predictionHistory = new Map();
+let apiHistoryCache = []; // Mảng lưu trữ gom phiên cào được
 
 async function processApiData() {
     try {
         const response = await axios.get('https://amongst-plots-called-dining.trycloudflare.com/api/tx');
-        const apiData = response.data;
+        const rawData = response.data;
 
-        let history = Array.isArray(apiData) ? apiData : (apiData.data || apiData.history || []);
-        if (!history || history.length === 0) return null;
+        if (!rawData || !rawData.phien) return null;
 
-        history = history.map(item => ({
-            Phien: item.Phien || item.phien || item.id,
-            Ket_qua: item.Ket_qua || item.ket_qua || (item.score >= 11 ? 'Tài' : 'Xỉu'),
-            Xuc_xac_1: item.Xuc_xac_1 || item.dice1 || null,
-            Xuc_xac_2: item.Xuc_xac_2 || item.dice2 || null,
-            Xuc_xac_3: item.Xuc_xac_3 || item.dice3 || null,
-            score: item.score || (item.Xuc_xac_1 + item.Xuc_xac_2 + item.Xuc_xac_3) || null,
-            Thoi_gian: item.Thoi_gian || item.time || new Date().toISOString()
-        })).sort((a, b) => a.Phien - b.Phien);
+        // Chuẩn hóa phiên đơn cào được từ API gốc
+        const currentItem = {
+            Phien: Number(rawData.phien),
+            Ket_qua: (rawData.ket_qua && rawData.ket_qua.includes('Tài')) || rawData.tong >= 11 ? 'Tài' : 'Xỉu',
+            Xuc_xac_1: Number(rawData.xuc_xac_1),
+            Xuc_xac_2: Number(rawData.xuc_xac_2),
+            Xuc_xac_3: Number(rawData.xuc_xac_3),
+            score: Number(rawData.tong),
+            Thoi_gian: rawData.thoi_gian || new Date().toISOString()
+        };
 
-        const latestRecord = history[history.length - 1];
+        // Tích lũy vào mảng nếu chưa tồn tại
+        const exists = apiHistoryCache.some(item => item.Phien === currentItem.Phien);
+        if (!exists) {
+            apiHistoryCache.push(currentItem);
+            if (apiHistoryCache.length > 100) apiHistoryCache.shift();
+        }
+
+        apiHistoryCache.sort((a, b) => a.Phien - b.Phien);
+
+        const latestRecord = apiHistoryCache[apiHistoryCache.length - 1];
         const currentPhien = Number(latestRecord.Phien);
         const nextPhien = currentPhien + 1;
 
-        // Đối chiếu phiên vừa ra
+        // Đối chiếu phiên vừa hoàn tất
         if (predictionHistory.has(currentPhien)) {
             const lastPred = predictionHistory.get(currentPhien);
             if (!lastPred.evaluated) {
@@ -403,14 +411,14 @@ async function processApiData() {
             }
         }
 
-        // Dự đoán phiên tiếp theo
-        const predictionResult = analyzer.predict(history);
+        // Dự đoán cho phiên kế tiếp
+        const predictionResult = analyzer.predict(apiHistoryCache);
         const stats = analyzer.getStats();
 
         const currentPredData = predictionHistory.get(currentPhien);
         const statusCurrent = currentPredData && currentPredData.evaluated ? currentPredData.Trang_thai : "";
 
-        // Lưu vết phiên tới
+        // Lưu vết dự đoán
         predictionHistory.set(nextPhien, {
             Phien_du_doan: nextPhien,
             Phien_hien_tai: currentPhien,
@@ -442,9 +450,7 @@ async function processApiData() {
             "id": "@nhan161019"
         };
 
-        // Gán kết quả JSON mới nhất
         latestPredictionJson = jsonOutput;
-
         renderConsoleTable();
         return jsonOutput;
 
@@ -468,7 +474,7 @@ function renderConsoleTable() {
         .slice(0, 10);
 
     if (historyArray.length === 0) {
-        console.log("\t\t\tĐang chờ dữ liệu đối chiếu phiên đầu tiên...");
+        console.log("\t\t\tĐang gom dữ liệu phiên đầu tiên...");
     } else {
         historyArray.forEach(item => {
             const checkIcon = item.Trang_thai === 'Dúng' ? '✅ Đúng' : '❌ Sai';
@@ -478,10 +484,10 @@ function renderConsoleTable() {
     console.log("=========================================================================\n");
 }
 
-// Chạy cào API mỗi 10 giây
+// Cào dữ liệu mỗi 10 giây
 setInterval(async () => {
     await processApiData();
 }, 10000);
 
-// Khởi chạy phiên đầu tiên
+// Khởi chạy ngay lập tức
 processApiData();
