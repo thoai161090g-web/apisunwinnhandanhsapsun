@@ -332,10 +332,11 @@ class TaiXiuAnalyzer {
     predict(history) {
         const ensemble = this.ensembleModels(history);
         return {
-            prediction: ensemble.prediction,
+            prediction: ensemble.prediction, // Dự đoán chính: "Tài" hoặc "Xỉu"
             confidence: ensemble.confidence,
             loai_cau: ensemble.pattern_type,
-            mau_cau: ensemble.pattern,
+            // Sửa dòng này để hiển thị rõ mẫu chuỗi lịch sử quá khứ (ví dụ: "Tài-Tài-Xỉu")
+            mau_cau: this.getResultArray(history).slice(-3).join('-') || ensemble.prediction,
             reason: ensemble.reason,
             do_tin_cay: (ensemble.confidence * 100).toFixed(0) + '%'
         };
