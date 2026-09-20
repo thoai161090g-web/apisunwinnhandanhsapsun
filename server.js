@@ -3,7 +3,7 @@ const axios = require('axios');
 const fs = require('fs');
 
 // ============================================================
-// SECTION 1: WEB SERVER ĐỂ RENDER KEEP-ALIVE & API ENDPOINT
+// SECTION 1: WEB SERVER & GIAO DIỆN BẢNG THỐNG KÊ
 // ============================================================
 
 const app = express();
@@ -15,20 +15,126 @@ const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost
 // Biến lưu trữ kết quả dự đoán JSON mới nhất
 let latestPredictionJson = null;
 
-// Endpoint kiểm tra server
+// Route hiển thị giao diện Bảng Thống Kê
 app.get('/', (req, res) => {
-    res.status(200).send({
-        status: "online",
-        message: "NHÂN VIP TOOL - Server đang chạy 24/7!",
-        timestamp: new Date().toISOString()
-    });
+    res.send(`
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>NHÂN VIP TOOL - BẢNG KẾT QUẢ</title>
+        <style>
+            body {
+                background-color: #120016;
+                color: #e0e0e0;
+                font-family: Arial, sans-serif;
+                margin: 0;
+                padding: 10px;
+                display: flex;
+                justify-content: center;
+            }
+            .table-container {
+                width: 100%;
+                max-width: 650px;
+                background: #1c0224;
+                border-radius: 8px;
+                overflow: hidden;
+                box-shadow: 0 0 15px rgba(255, 0, 128, 0.2);
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                text-align: center;
+                font-size: 13px;
+            }
+            th {
+                background-color: #2a0538;
+                color: #b085c8;
+                padding: 12px 5px;
+                font-weight: bold;
+                border-bottom: 1px solid #3d0a52;
+            }
+            td {
+                padding: 10px 5px;
+                border-bottom: 1px solid #280436;
+            }
+            tr:nth-child(even) {
+                background-color: #16011d;
+            }
+            .dung {
+                color: #00ff66;
+                font-weight: bold;
+            }
+            .sai {
+                color: #ff3366;
+                font-weight: bold;
+            }
+        </style>
+        <script>
+            // Tự động tải lại trang mỗi 5 giây
+            setInterval(() => {
+                location.reload();
+            }, 5000);
+        </script>
+    </head>
+    <body>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>GAME</th>
+                        <th>PHIÊN</th>
+                        <th>THỜI GIAN</th>
+                        <th>DỰ ĐOÁN</th>
+                        <th>KẾT QUẢ</th>
+                        <th>XÁC MINH</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${renderTableRows()}
+                </tbody>
+            </table>
+        </div>
+    </body>
+    </html>
+    `);
 });
 
+// Hàm tạo các dòng dữ liệu cho bảng
+function renderTableRows() {
+    const historyArray = Array.from(predictionHistory.values())
+        .filter(item => item.evaluated)
+        .reverse();
+
+    if (historyArray.length === 0) {
+        return `<tr><td colspan="6" style="padding: 20px;">Đang khởi tạo và chờ phiên dữ liệu đầu tiên...</td></tr>`;
+    }
+
+    return historyArray.map(item => {
+        const isDung = item.Trang_thai === 'Dúng';
+        const iconClass = isDung ? 'dung' : 'sai';
+        const iconText = isDung ? '✅ Đúng' : '❌ Sai';
+        
+        return `
+            <tr>
+                <td style="color: #a272c2;">SUNWIN</td>
+                <td>#${item.Phien_du_doan}</td>
+                <td style="color: #888;">${item.Thoi_gian}</td>
+                <td>${item.Du_doan}</td>
+                <td>${item.Ket_qua_thuc_te}</td>
+                <td class="${iconClass}">${iconText}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Endpoint Health Check
 app.get('/health', (req, res) => {
     res.status(200).send("OK");
 });
 
-// ROUTE API XUẤT DỮ LIỆU DỰ ĐOÁN JSON CHO TOOL / WEB GOỊ VÀO
+// Route xuất API JSON dự đoán cho Tool / App
 app.get('/api/predict', (req, res) => {
     if (latestPredictionJson) {
         res.status(200).json(latestPredictionJson);
@@ -40,6 +146,7 @@ app.get('/api/predict', (req, res) => {
     }
 });
 
+// Khởi chạy server
 app.listen(PORT, () => {
     console.log(`[🚀] Express Server đang chạy tại port: ${PORT}`);
     
@@ -257,7 +364,7 @@ class TaiXiuAnalyzer {
 
 
 // ============================================================
-// SECTION 3: LUỒNG CÀO API & ĐỐI CHIẾU XUẤT KẾT QUẢ
+// SECTION 3: LUỒNG CÀO API & XỬ LÝ DỮ LIỆU
 // ============================================================
 
 const analyzer = new TaiXiuAnalyzer();
@@ -335,7 +442,7 @@ async function processApiData() {
             "id": "@nhan161019"
         };
 
-        // GÁN KẾT QUẢ ĐỂ TRẢ VỀ CHO ROUTE /api/predict
+        // Gán kết quả JSON mới nhất
         latestPredictionJson = jsonOutput;
 
         renderConsoleTable();
@@ -371,10 +478,10 @@ function renderConsoleTable() {
     console.log("=========================================================================\n");
 }
 
-// Chạy vòng lặp cào API mỗi 10 giây
+// Chạy cào API mỗi 10 giây
 setInterval(async () => {
     await processApiData();
 }, 10000);
 
-// Gọi phiên đầu tiên ngay khi khởi động
+// Khởi chạy phiên đầu tiên
 processApiData();
