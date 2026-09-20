@@ -3,16 +3,19 @@ const axios = require('axios');
 const fs = require('fs');
 
 // ============================================================
-// SECTION 1: WEB SERVER ĐỂ RENDER KEEP-ALIVE & BIND PORT
+// SECTION 1: WEB SERVER ĐỂ RENDER KEEP-ALIVE & API ENDPOINT
 // ============================================================
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// URL ứng dụng Render của bạn (Thay bằng URL thật sau khi deploy Render)
+// URL ứng dụng Render của bạn
 const RENDER_EXTERNAL_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
 
-// Endpoint trả về trang thái cho Render & UptimeRobot check
+// Biến lưu trữ kết quả dự đoán JSON mới nhất
+let latestPredictionJson = null;
+
+// Endpoint kiểm tra server
 app.get('/', (req, res) => {
     res.status(200).send({
         status: "online",
@@ -23,6 +26,18 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => {
     res.status(200).send("OK");
+});
+
+// ROUTE API XUẤT DỮ LIỆU DỰ ĐOÁN JSON CHO TOOL / WEB GOỊ VÀO
+app.get('/api/predict', (req, res) => {
+    if (latestPredictionJson) {
+        res.status(200).json(latestPredictionJson);
+    } else {
+        res.status(503).json({ 
+            status: "waiting", 
+            message: "Đang khởi tạo và chờ dữ liệu phiên tiếp theo..." 
+        });
+    }
 });
 
 app.listen(PORT, () => {
@@ -36,7 +51,7 @@ app.listen(PORT, () => {
         } catch (err) {
             console.error(`[⚠️ Ping Error]:`, err.message);
         }
-    }, 5 * 60 * 1000); // 5 phút
+    }, 5 * 60 * 1000);
 });
 
 
@@ -174,7 +189,6 @@ class TaiXiuAnalyzer {
 
         if (!model || results.length < model.minLength) return null;
 
-        // Logic mẫu đại diện cho Ensemble Model
         const streak = this.getStreak(results);
         if (streak >= 3) {
             return { prediction: last, confidence: 0.8, reason: `Cầu bệt ${streak} tay`, model_name: model.name };
@@ -321,6 +335,9 @@ async function processApiData() {
             "id": "@nhan161019"
         };
 
+        // GÁN KẾT QUẢ ĐỂ TRẢ VỀ CHO ROUTE /api/predict
+        latestPredictionJson = jsonOutput;
+
         renderConsoleTable();
         return jsonOutput;
 
@@ -356,9 +373,8 @@ function renderConsoleTable() {
 
 // Chạy vòng lặp cào API mỗi 10 giây
 setInterval(async () => {
-    const jsonResult = await processApiData();
-    if (jsonResult) {
-        console.log("--- DỮ LIỆU KẾT QUẢ JSON ---");
-        console.log(JSON.stringify(jsonResult, null, 2));
-    }
+    await processApiData();
 }, 10000);
+
+// Gọi phiên đầu tiên ngay khi khởi động
+processApiData();
